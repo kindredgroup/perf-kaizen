@@ -1,0 +1,24 @@
+{
+  "name": "perf-kaizen",
+  "version": "0.1.0",
+  "description": "Helper lib to improve perf testing for node.js app",
+  "author": "Gethyl Kurian <gethyl.kurian@kindredgroup.com>",
+  "type": "module",
+  "engines": {
+    "node": ">= 20 < 21"
+  },
+  "workspaces": [
+    "packages/*",
+    "examples/offer-topic-example"
+  ],
+  "devDependencies": {
+    "@types/lodash": "^4.17.4",
+    "@types/node": "~18",
+    "rimraf": "~5.0",
+    "typescript": "~5.4"
+  },
+  "dependencies": {
+    "lodash": "^4.17.21",
+    "tslib": "^2.6.2"
+  }
+}

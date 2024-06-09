@@ -1,0 +1,31 @@
+{
+  "name": "@perf-kaizen/load-generator",
+  "version": "0.1.0",
+  "description": "Load generator",
+  "author": "Gethyl Kurian <gethyl.kurian@kindredgroup.com>",
+  "type": "module",
+  "engines": {
+    "node": ">= 18 < 21"
+  },
+  "devDependencies": {
+    "eslint": "~8.56",
+    "eslint-config-prettier": "~9.1",
+    "prettier": "~3.2"
+  },
+  "scripts": {
+    "clean": "rimraf coverage build tmp",
+    "prebuild": "npm run lint",
+    "build": "tsc -p tsconfig.json",
+    "build:watch": "tsc -w -p tsconfig.json",
+    "build:release": "npm run clean && tsc -p tsconfig.release.json",
+    "lint": "eslint . --ext .ts --ext .mts",
+    "test": "jest --coverage",
+    "prettier": "prettier --config .prettierrc --write .",
+    "test:watch": "jest --watch"
+  },
+  "dependencies": {
+    "@perf-kaizen/logger": "^0.1.0",
+    "eslint-plugin-jest": "^28.5.0",
+    "jest": "^29.7.0"
+  }
+}

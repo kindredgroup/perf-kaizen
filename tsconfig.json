@@ -1,0 +1,14 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "@perf-kaizen/load-generator"
+    },
+    {
+      "path": "@perf-kaizen/logger"
+    },
+    {
+      "path": "offer-topic-example"
+    }
+  ]
+}

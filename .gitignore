@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+
+# Transpiled files
+build/
+
+# VS Code
+.vscode
+!.vscode/tasks.js
+
+logs/
