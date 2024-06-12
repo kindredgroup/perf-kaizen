@@ -59,6 +59,62 @@ export enum ContestType {
   ContestType5 = "ContestType5",
 }
 
+export interface Proposition {
+  propositionKey: string
+  contestKey: string
+  name: string
+  type: string
+  isAvailable: boolean
+  options: Array<Option>
+  variants: Array<Variant>
+  outcomes: Array<Outcome>
+  timestamp: string
+}
+
+export type PropositionChanged =  Partial<Proposition> & { contestKey: string, propositionKey: string}
+export type OptionChanged =  Partial<Option> & { optionKey: string, contestKey: string, propositionKey: string}
+export type VariantChanged =  Partial<Variant> & { variantKey: string, contestKey: string, propositionKey: string}
+export type OutcomeChanged =  Partial<Outcome> & { optionKey: string, variantKey: string, contestKey: string, propositionKey: string}
+
+export interface OutcomeResult {
+  optionKey: string
+  variantKey: string
+  status: string
+  winAmount: number
+  }
+
+export interface Result {
+  contestKey: string
+  propositionKey: string
+  outcomeResult: Array<OutcomeResult>
+  timestamp: string
+}
+
+export interface Market {
+  contestKey: string
+  propositionKey: string
+  isAvailable: boolean
+  timestamp: string
+}
+
+export interface Price {
+  optionKey: string
+  variantKey: string
+  price: number
+  timestamp: string
+}
+export interface PriceChanged {
+  contestKey: string
+  propositionKey: string
+  prices: Array<Price>
+  timestamp: string
+}
+
+
+/*---------------------------------------------------------------------------------------------------------------------------*
+ * Domain models
+ *---------------------------------------------------------------------------------------------------------------------------*/
+
 export interface Contest {
   contestKey: string
   name: string
@@ -90,53 +146,38 @@ export interface Outcome {
   resulted: boolean
 }
 
-export interface Proposition {
+// export interface PropositionDomain {
+//   propositionKey: string
+//   contestKey: string
+//   name: string
+//   type: string
+//   isAvailable: boolean
+//   options: Map<string, Option>
+//   variants: Map<string,Variant>
+//   outcomes: Map<string, Outcome>
+//   timestamp: string
+// }
+
+/*---------------------------------------------------------------------------------------------------------------------------*
+ * Db specific models.
+ *  - If Domain and DB models are different
+ *---------------------------------------------------------------------------------------------------------------------------*/
+export interface PropositionDb {
   propositionKey: string
   contestKey: string
   name: string
   type: string
   isAvailable: boolean
-  options: Array<Option>
-  variants: Array<Variant>
-  outcomes: Array<Outcome>
+  options: {[key:string]: Option}
+  variants: {[key:string]: Variant}
+  outcomes: {[key:string]: Outcome}
   timestamp: string
 }
 
-export type PropositionChanged =  Partial<Proposition> & { contestKey: string, propositionKey: string}
-export type OptionChanged =  Partial<Option> & { optionKey: string, contestKey: string, propositionKey: string}
-export type VariantChanged =  Partial<Variant> & { variantKey: string, contestKey: string, propositionKey: string}
-export type OutcomeChanged =  Partial<Outcome> & { optionKey: string, variantKey: string, contestKey: string, propositionKey: string}
-export interface OutcomeResult {
-  optionKey: string
-  variantKey: string
-  status: string
-  winAmount: number
-  }
-
-export interface Result {
-  contestKey: string
-  propositionKey: string
-  outcomeResult: Array<OutcomeResult>
-  timestamp: string
-
-}
-
-export interface Market {
+export interface MarketDb {
   contestKey: string
   propositionKey: string
   isAvailable: boolean
-  timestamp: string
-}
-
-export interface Price {
-  optionKey: string
-  variantKey: string
-  price: number
-  timestamp: string
-}
-export interface PriceChanged {
-  contestKey: string
-  propositionKey: string
-  prices: Array<Price>
+  prices: {[key:string]: Price}
   timestamp: string
 }

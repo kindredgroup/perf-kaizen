@@ -1,5 +1,6 @@
 import { OfferingLoadGeneratorParams, OfferingLoadGeneratorCount } from "./types.js";
 
+
 export const getOfferingsByTypeCountToGenerate = (input: OfferingLoadGeneratorParams): OfferingLoadGeneratorCount => {
   return {
     Contest: {
@@ -26,3 +27,10 @@ export const getOfferingsTotalCount = (offerings: OfferingLoadGeneratorCount): n
   return totalChildredPerContest * totalContests
 }
 
+export function createLookupKey(lookups: string[]): string {
+  return lookups.join(":")
+}
+
+export function convertMapToObject<T extends object>(map: Map<string,T>): {[k: string]:T} {
+  return [...map.entries()].reduce((acc, [k,v]) => ({...acc, [k]: v}), {})
+}

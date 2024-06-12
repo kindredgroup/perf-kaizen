@@ -25,11 +25,13 @@ export class ConsumerHandler{
     await payload.commitOffsetsIfNecessary({
       topics: [ {
         partitions: [ {
-          offset:    payload.batch.lastOffset(),
+          offset:    payload.batch.lastOffset() + 1, //Commit should be last offset + 1
           partition: payload.batch.partition,
         } ],
         topic: payload.batch.topic,
       } ],
     })
+
+    console.log(`Committed till offset=${payload.batch.lastOffset()} for partition=${payload.batch.partition}`)
   }
 }

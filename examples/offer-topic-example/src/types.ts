@@ -56,3 +56,4 @@ export enum OfferingMessageType {
   // Out Result
   OutcomeResult = "OutcomeResult",
 }
+

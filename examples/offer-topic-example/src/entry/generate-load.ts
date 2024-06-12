@@ -1,9 +1,9 @@
 import { loadGeneratorMulti } from "@perf-kaizen/load-generator/build/load-generator.js"
-import { generateMockOfferingsData } from "./offer-message/mocks.js"
-import { OfferingLoadGeneratorParams } from "./offer-message/types.js"
-import { getOfferingsByTypeCountToGenerate } from "./offer-message/utils.js"
+import { generateMockOfferingsData } from "../mocks.js"
+import { OfferingLoadGeneratorParams } from "../types.js"
+import { getOfferingsByTypeCountToGenerate } from "../utils.js"
 import { logger } from "@perf-kaizen/logger/build/logger.js"
-import { KafkaClient } from "./kafka/kafka-client.js"
+import { KafkaClient } from "../kafka/kafka-client.js"
 
 logger.info("🏁 Starting offer message load generator...")
 
@@ -74,7 +74,7 @@ const publishToKafka = async (arg) => {
 
 }
 
-const THROUGHPUT = 20_000
+const THROUGHPUT = 15_000
 const result = await loadGeneratorMulti({rate: THROUGHPUT}, [generateMockDataSet1(), generateMockDataSet2()], publishToKafka)
 
 // Generate load and execute the async task like publishing to Kafka
@@ -85,3 +85,4 @@ logger.info("Time taken to generate the mock data = %s ms", (timeTakenToGenerate
 logger.info("Expected TPS = %s", THROUGHPUT)
 logger.info("Actual TPS = %s", result.metrics.totalCount / (timeTakenToGenerate) * 1000)
 
+process.exit()
