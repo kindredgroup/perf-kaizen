@@ -8,5 +8,6 @@ export class MockDbService extends DatastoreService {
     this.contestStore = contestStore
     this.propositionStore = propositionStore
     this.marketStore = marketStore
+    this.propositionCache = new Map()
   }
 }

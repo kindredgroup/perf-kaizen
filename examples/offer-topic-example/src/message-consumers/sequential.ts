@@ -1,12 +1,12 @@
 import { EachBatchPayload } from "kafkajs"
-import { TopicConsumerHandler } from "../../kafka/consumers/handler.js"
-import { deserializeOfferMessageByType, groupMessagesByMessageType } from "../utils.js"
-import { OfferingMessageType } from "../../types.js"
-import { Contest, Market, OptionChanged, OutcomeChanged, Proposition, PropositionChanged, PropositionDb, VariantChanged } from "../../domain/models.js"
-import { DatastoreService } from "../../datastore/core.js"
+import { TopicConsumerHandler } from "../kafka/consumers/handler.js"
+import { deserializeOfferMessageByType, groupMessagesByMessageType, printMetrics } from "./utils.js"
+import { OfferingMessageType } from "../types.js"
+import { Contest, Market, OptionChanged, OutcomeChanged, Proposition, PropositionChanged, PropositionDb, VariantChanged } from "../domain/models.js"
+import { DatastoreService } from "../datastore/core.js"
 import { logger } from "@perf-kaizen/logger/build/logger.js"
-import { convertMarketToDomain, convertPropositionToDomain } from "../../domain/converters/kafka-to-internal.js"
-import { createLookupKey } from "../../utils.js"
+import { convertMarketToDomain, convertPropositionToDomain } from "../domain/converters/kafka-to-internal.js"
+import { createLookupKey } from "../utils.js"
 import _ from "lodash"
 
 export class SequentialMessageHandler implements TopicConsumerHandler{
@@ -49,7 +49,7 @@ export class SequentialMessageHandler implements TopicConsumerHandler{
 
       // If not found locally, get from datastore.
       if (!proposition) {
-        proposition = await this.datastoreService.getProposition(pc.contestKey, pc.propositionKey)
+        proposition = await this.datastoreService.getPropositionWithCache(pc.contestKey, pc.propositionKey)
         propositionMap.set(lookupKey,proposition)
       }
 
@@ -78,7 +78,7 @@ export class SequentialMessageHandler implements TopicConsumerHandler{
 
       // If not found locally, get from datastore.
       if (!proposition) {
-        proposition = await this.datastoreService.getProposition(oc.contestKey, oc.propositionKey)
+        proposition = await this.datastoreService.getPropositionWithCache(oc.contestKey, oc.propositionKey)
         propositionMap.set(lookupKey,proposition)
       }
 
@@ -118,7 +118,7 @@ export class SequentialMessageHandler implements TopicConsumerHandler{
 
       // If not found locally, get from datastore.
       if (!proposition) {
-        proposition = await this.datastoreService.getProposition(vc.contestKey, vc.propositionKey)
+        proposition = await this.datastoreService.getPropositionWithCache(vc.contestKey, vc.propositionKey)
         propositionMap.set(lookupKey,proposition)
       }
 
@@ -158,7 +158,7 @@ export class SequentialMessageHandler implements TopicConsumerHandler{
 
       // If not found locally, get from datastore.
       if (!proposition) {
-        proposition = await this.datastoreService.getProposition(oc.contestKey, oc.propositionKey)
+        proposition = await this.datastoreService.getPropositionWithCache(oc.contestKey, oc.propositionKey)
         propositionMap.set(lookupKey,proposition)
       }
 
@@ -205,33 +205,63 @@ export class SequentialMessageHandler implements TopicConsumerHandler{
 
     //  - Upsert Contest
     const offerContests = deserializerForMessageTypeFn<Contest>(OfferingMessageType.Contest)
+    const totalContest = offerContests.length
+    const contestProcessingStartMs = performance.now()
     await this.processContests(offerContests)
+    const contestProcessingEndMs = performance.now()
 
     //  - Upsert Proposition
     const offerPropositions = deserializerForMessageTypeFn<Proposition>(OfferingMessageType.Proposition)
+    const totalProposition = offerPropositions.length
+    const propositionProcessingStartMs = performance.now()
     await this.processPropositions(offerPropositions)
+    const propositionProcessingEndMs = performance.now()
 
-    //  - Upsert Market
-    const offerMarket = deserializerForMessageTypeFn<Market>(OfferingMessageType.Market)
-    await this.processMarkets(offerMarket)
 
     //  - Upsert PropositionChanged
-    const offerPropositionChanged = deserializerForMessageTypeFn<PropositionChanged>(OfferingMessageType.PropositionChanged)
-    await this.processPropositionsChanged(offerPropositionChanged)
+    const offerPropositionsChanged = deserializerForMessageTypeFn<PropositionChanged>(OfferingMessageType.PropositionChanged)
+    const totalPropositionsChanged = offerPropositionsChanged.length
+    const propositionsChangedProcessingStartMs = performance.now()
+    await this.processPropositionsChanged(offerPropositionsChanged)
+    const propositionsChangedProcessingEndMs = performance.now()
 
     //  - Upsert OptionChanged
     const offerOptionsChanged = deserializerForMessageTypeFn<OptionChanged>(OfferingMessageType.OptionChanged)
+    const totalOptionsChanged = offerOptionsChanged.length
+    const optionsChangedProcessingStartMs = performance.now()
     await this.processOptionsChanged(offerOptionsChanged)
+    const optionsChangedProcessingEndMs = performance.now()
 
     //  - Upsert VariantChanged
     const offerVariantsChanged = deserializerForMessageTypeFn<VariantChanged>(OfferingMessageType.VariantChanged)
+    const totalVariantsChanged = offerVariantsChanged.length
+    const variantsChangedProcessingStartMs = performance.now()
     await this.processVariantsChanged(offerVariantsChanged)
+    const variantsChangedProcessingEndMs = performance.now()
 
     //  - Upsert OutcomeChanged
     const offerOutcomesChanged = deserializerForMessageTypeFn<OutcomeChanged>(OfferingMessageType.OutcomeChanged)
-    await this.processVariantsChanged(offerOutcomesChanged)
-    //  - Upsert PriceChanged
+    const totalOutcomesChanged = offerOutcomesChanged.length
+    const outcomesChangedProcessingStartMs = performance.now()
+    await this.processOutcomesChanged(offerOutcomesChanged)
+    const outcomesChangedProcessingEndtMs = performance.now()
+
     //  - Upsert results
+
+    //  - Upsert Market
+    // const offerMarket = deserializerForMessageTypeFn<Market>(OfferingMessageType.Market)
+    // await this.processMarkets(offerMarket)
+    //  - Upsert PriceChanged
+
+    logger.info("+++++++++")
+    logger.info("Processed partition=%s with below stats per messageType", payload.batch.partition)
+    printMetrics(OfferingMessageType.Contest, totalContest, contestProcessingStartMs, contestProcessingEndMs)
+    printMetrics(OfferingMessageType.Proposition, totalProposition, propositionProcessingStartMs, propositionProcessingEndMs)
+    printMetrics(OfferingMessageType.PropositionChanged, totalPropositionsChanged, propositionsChangedProcessingStartMs, propositionsChangedProcessingEndMs)
+    printMetrics(OfferingMessageType.OptionChanged, totalOptionsChanged, optionsChangedProcessingStartMs, optionsChangedProcessingEndMs)
+    printMetrics(OfferingMessageType.VariantChanged, totalVariantsChanged, variantsChangedProcessingStartMs, variantsChangedProcessingEndMs)
+    printMetrics(OfferingMessageType.OutcomeChanged, totalOutcomesChanged, outcomesChangedProcessingStartMs, outcomesChangedProcessingEndtMs)
+    logger.info("+++++++++")
 
     this.metrics.endTimeMs = performance.now()
 
@@ -240,8 +270,11 @@ export class SequentialMessageHandler implements TopicConsumerHandler{
     // Send heartbeat to Kafka
     await payload.heartbeat()
 
+    // Clear the cache
+    this.datastoreService.clearPropositionCache()
+
     const timeTakenToGenerate = this.metrics.endTimeMs - this.metrics.startTimeMs
-    logger.info("Total offerings processed = %s ", this.metrics.total)
+    logger.info("Total offerings processed = %s in partition", this.metrics.total)
     logger.info("Time taken to process the data = %s ms", (timeTakenToGenerate))
     logger.info("Throughput = %s", this.metrics.total / (timeTakenToGenerate) * 1000)
 

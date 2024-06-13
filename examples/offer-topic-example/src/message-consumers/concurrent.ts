@@ -1,225 +1,181 @@
-// import type {
-//   EachBatchPayload, KafkaMessage,
-// } from "kafkajs"
-// import {
-//   deserializeOfferMessageByType, groupMessagesByMessageType,
-// } from "./kafka/batch-handlers/utils"
-// import { OfferingMessageType } from "./kafka/utils/core"
-// import { apmSpan } from "@bet-domain-lib/apm/decorators"
-// import type Logger from "@bet-domain-lib/logging/logger"
-// import type { ContestService } from "@chimera-market-mirror/domain/contest-service"
-// import type { Proposition } from "@chimera-market-mirror/model/domain/proposition"
-// import type { PropositionService } from "@chimera-market-mirror/domain/proposition-service"
-// import type { MarketService } from "@chimera-market-mirror/domain/market-service"
-// import type { TopicConsumerHandler } from "./kafka/consumers/handler"
-// import { Contest as ContestV1 } from "@bet-domain-lib/models/offer/offer_domain/contest/1.0"
-// import { RelatedContests as RelatedContestsV1 } from "@bet-domain-lib/models/offer/offer_domain/related_contests/1.0"
-// import { Proposition as PropositionV1 } from "@bet-domain-lib/models/offer/offer_domain/proposition/1.0"
-// import { PropositionChanged as PropositionChangedV1 } from "@bet-domain-lib/models/offer/offer_domain/proposition_changed/1.0"
-// import { VariantChanged as VariantChangedV1 } from "@bet-domain-lib/models/offer/offer_domain/variant_changed/1.0"
-// import { OptionChanged as OptionChangedV1 } from "@bet-domain-lib/models/offer/offer_domain/option_changed/1.0"
-// import { OutcomeChanged as OutcomeChangedV1 } from "@bet-domain-lib/models/offer/offer_domain/outcome_changed/1.0"
-// import { OutcomeResult as OutcomeResultV1 } from "@bet-domain-lib/models/offer/offer_domain/outcome_result/1.0"
-// import { Market as MarketV1 } from "@bet-domain-lib/models/offer/offer_domain/market/1.0"
-// import { MarketPriceChanged as MarketPriceChangedV1 } from "@bet-domain-lib/models/offer/offer_domain/market_price_changed/1.0"
-// import {
-//   createMarketToUpdateFromNode,
-//   createPropositionToUpdateFromNode,
-// } from "../../core/contest-as-tree"
-// import { MarketRn } from "@bet-domain-lib/models/rn/1.0"
-// import type { Market } from "@chimera-market-mirror/model/domain/market"
-// import type { ContestTreeRootNode } from "@chimera-market-mirror/simplified/core/type"
-// import {
-//   createLookupKey, recursiveNestedMap,
-// } from "@chimera-market-mirror/simplified/core/utils"
-// import {
-//   buildContestNodeFromV1Objects, buildMarketNodeUnderContestKey, buildPropositionNodeUnderContestKey,
-// } from "@chimera-market-mirror/simplified/core/converters/v1-to-domain"
+import { EachBatchPayload, KafkaMessage } from "kafkajs"
+import { TopicConsumerHandler } from "../kafka/consumers/handler.js"
+import { deserializeOfferMessageByType, groupMessagesByKey, groupMessagesByMessageType, recursiveNestedMap } from "./utils.js"
+import { Contest, OptionChanged, OutcomeChanged, Proposition, PropositionChanged, PropositionDb, VariantChanged } from "../domain/models.js"
+import { DatastoreService } from "../datastore/core.js"
+import { convertPropRelatedChangeToDomain, convertPropositionToDomain } from "../domain/converters/kafka-to-internal.js"
+import { createLookupKey } from "../utils.js"
+import _ from "lodash"
+import { OfferingMessageType } from "../types.js"
+import { logger } from "@perf-kaizen/logger/build/logger.js"
 
-// export class OfferConsumerHandler implements TopicConsumerHandler{
-//   contestService: ContestService
-//   log: Logger
-//   marketService: MarketService
-//   propositionService: PropositionService
-//   constructor(log: Logger, contestService: ContestService, propositionService: PropositionService, marketService: MarketService){
-//     this.log = log
-//     this.contestService = contestService
-//     this.propositionService = propositionService
-//     this.marketService = marketService
-//   }
+export class ConcurrentMessageHandler implements TopicConsumerHandler{
+  private datastoreService: DatastoreService
+  metrics: {
+    total: number
+    startTimeMs: number
+    endTimeMs: number
+  }
+  constructor(datastoreService: DatastoreService){
+    this.datastoreService = datastoreService
+    this.metrics = {
+      total:0,
+      startTimeMs:0,
+      endTimeMs:0
+    }
+  }
 
-//   @apmSpan()
-//   createContestTreeFromBatchMessages(messages: KafkaMessage[]): ContestTreeRootNode[]{
-//     // -----------------------------------------------------------------------------
-//     // ------------------------- Grouping by messageType ---------------------------
-//     // -----------------------------------------------------------------------------
-//     const messagesGrouped = groupMessagesByMessageType<OfferingMessageType>(messages)
+  async processByContestKey(contestKey: string, messages: KafkaMessage[]){
 
-//     // ----------------------------------------------------------------------------------
-//     // ----------------- Grouping each messageType further by contestKey ----------------
-//     // ----------------------------------------------------------------------------------
-//     const deserializerForMessageTypeFn = deserializeOfferMessageByType(messagesGrouped)
-//     // ---- Grouping Contest
-//     const offerContests: Map<string, ContestV1> = recursiveNestedMap(deserializerForMessageTypeFn(OfferingMessageType.Contest, ContestV1))([ { groupingKey: "contestKey", groupingStrategy: "latest" } ])
+    const messagesGrouped = groupMessagesByMessageType<OfferingMessageType>(messages)
 
-//     const offerRelatedContests: Map<string, RelatedContestsV1> = recursiveNestedMap(deserializerForMessageTypeFn(OfferingMessageType.RelatedContests, RelatedContestsV1))([ { groupingKey: "contestKey", groupingStrategy: "latest" } ])
+    const deserializerForMessageTypeFn = deserializeOfferMessageByType(messagesGrouped)
 
-//     // ---- Grouping Proposition related items
+    // ---- Grouping Contest
+    const offerContest = _.last(deserializerForMessageTypeFn<Contest>(OfferingMessageType.Contest))
 
-//     const offerPropositions: Map<string, Map<string, PropositionV1>> = recursiveNestedMap(deserializerForMessageTypeFn(OfferingMessageType.Proposition, PropositionV1))([ { groupingKey: "contestKey" }, { groupingKey: "propositionKey", groupingStrategy: "latest" } ])
 
-//     const offerPropositionsChanged: Map<string, Map<string, PropositionChangedV1>> = recursiveNestedMap(deserializerForMessageTypeFn(OfferingMessageType.PropositionChanged, PropositionChangedV1))([ { groupingKey: "contestKey" }, { groupingKey: "propositionKey", groupingStrategy: "merge" } ])
+    // ---- Grouping Proposition related items
 
-//     const offerOptionsChanged: Map<string, Map<string, Map<string, OptionChangedV1>>> = recursiveNestedMap(deserializerForMessageTypeFn(OfferingMessageType.OptionChanged, OptionChangedV1))([ { groupingKey: "contestKey" }, { groupingKey: "propositionKey" }, { groupingKey: "optionKey", groupingStrategy: "merge" } ])
+    const offerPropositions: Map<string, Proposition> = recursiveNestedMap(
+      deserializerForMessageTypeFn<Proposition>(OfferingMessageType.Proposition)
+    )([ { groupingKey: "propositionKey", groupingStrategy: "latest" } ]) as Map<string, Proposition>
 
-//     const offerVariantsChanged: Map<string, Map<string, Map<string, VariantChangedV1>>> = recursiveNestedMap(deserializerForMessageTypeFn(OfferingMessageType.VariantChanged, VariantChangedV1))([ { groupingKey: "contestKey" }, { groupingKey: "propositionKey" }, { groupingKey: "variantKey", groupingStrategy: "merge" } ])
 
-//     const offerOutcomesChanged: Map<string, Map<string, Map<string, OutcomeChangedV1>>> = recursiveNestedMap(deserializerForMessageTypeFn(OfferingMessageType.OutcomeChanged, OutcomeChangedV1))([ { groupingKey: "contestKey" }, { groupingKey: "propositionKey" }, { groupingKey: outcome => createLookupKey([ outcome.optionKey, outcome.variantKey ]), groupingStrategy: "latest" } ])
+    // console.log(`For contest ${contestKey}, propositions size =${offerPropositions.size} `, offerPropositions)
+    const offerPropositionsChanged: Map<string, PropositionChanged> = recursiveNestedMap(
+      deserializerForMessageTypeFn<PropositionChanged>(OfferingMessageType.PropositionChanged)
+    )([{ groupingKey: "propositionKey", groupingStrategy: "merge" } ]) as Map<string, PropositionChanged>
 
-//     const offerResultsChanged: Map<string, Map<string, Map<string, OutcomeResultV1>>> = recursiveNestedMap(deserializerForMessageTypeFn(OfferingMessageType.OutcomeResult, OutcomeResultV1))([ { groupingKey: "contestKey" }, { groupingKey: "propositionKey" }, { groupingKey: "provider", groupingStrategy: "latest" } ])
+    const offerOptionsChanged: Map<string, Map<string, OptionChanged>> = recursiveNestedMap(
+      deserializerForMessageTypeFn<OptionChanged>(OfferingMessageType.OptionChanged)
+    )([{ groupingKey: "propositionKey" }, { groupingKey: "optionKey", groupingStrategy: "merge" } ]) as unknown as Map<string, Map<string, OptionChanged>>
 
-//     // ---- Grouping Market related items
-//     const offerMarketsChanged: Map<string, Map<string, MarketV1>> = recursiveNestedMap(deserializerForMessageTypeFn(OfferingMessageType.Market, MarketV1))([ { groupingKey: "contestKey" }, { groupingKey: k => new MarketRn(k.contestKey, k.propositionKey, k.tenantKey).toString(), groupingStrategy: "latest" } ])
+    const offerVariantsChanged:  Map<string, Map<string, VariantChanged>> = recursiveNestedMap(
+      deserializerForMessageTypeFn<VariantChanged>(OfferingMessageType.VariantChanged)
+    )([{ groupingKey: "propositionKey" }, { groupingKey: "variantKey", groupingStrategy: "merge" }]) as unknown as Map<string, Map<string,VariantChanged>>
 
-//     const offerMarketPricesChanged: Map<string, Map<string, MarketPriceChangedV1>> = recursiveNestedMap(deserializerForMessageTypeFn(OfferingMessageType.MarketPriceChanged, MarketPriceChangedV1))([ { groupingKey: "contestKey" }, { groupingKey: k => new MarketRn(k.contestKey, k.propositionKey, k.tenantKey).toString(), groupingStrategy: "latest" } ])
+    const offerOutcomesChanged:  Map<string, Map<string, OutcomeChanged>> = recursiveNestedMap(
+      deserializerForMessageTypeFn<OutcomeChanged>(OfferingMessageType.OutcomeChanged)
+    )([  { groupingKey: "propositionKey" }, { groupingKey: outcome => createLookupKey([ outcome.optionKey, outcome.variantKey ]), groupingStrategy: "latest" } ]) as unknown as Map<string, Map<string, OutcomeChanged>>
 
-//     const contestKeys = new Set([
-//       ...offerContests.keys(),
-//       ...offerRelatedContests.keys(),
-//       ...offerPropositions.keys(),
-//       ...offerPropositionsChanged.keys(),
-//       ...offerOptionsChanged.keys(),
-//       ...offerVariantsChanged.keys(),
-//       ...offerOutcomesChanged.keys(),
-//       ...offerResultsChanged.keys(),
-//       ...offerMarketsChanged.keys(),
-//       ...offerMarketPricesChanged.keys(),
-//     ])
+    const propositionKeys = new Set([
+      ...offerPropositions?.keys() || [],
+      ...offerPropositionsChanged?.keys() || [],
+      ...offerOptionsChanged?.keys() || [],
+      ...offerVariantsChanged?.keys() || [],
+      ...offerOutcomesChanged?.keys() || [],
+    ])
 
-//     // ----------------------------------------------------------------------------------
-//     // -------------------------- Create contest tree nodes -----------------------------
-//     // ----------------------------------------------------------------------------------
-//     const contestTreeRootNode: ContestTreeRootNode[] = [ ...contestKeys ].map(contestKey => {
-//       const contestRelatedContests = offerRelatedContests.get(contestKey)
-//       const contestPropositions = offerPropositions.get(contestKey)
-//       const contestPropositionsChanged = offerPropositionsChanged.get(contestKey)
-//       const contestOptionsChanged = offerOptionsChanged.get(contestKey)
-//       const contestVariantsChanged = offerVariantsChanged.get(contestKey)
-//       const contestOutcomesChanged = offerOutcomesChanged.get(contestKey)
-//       const contestResultsChanged = offerResultsChanged.get(contestKey)
+    // Fetch all existing propositions
+    const propositionsOnDb = await Promise.all([...propositionKeys].map(propKey => this.datastoreService.getProposition(contestKey, propKey)))
+    const propositionOnDbFiltered = propositionsOnDb.filter(p=> !!p)
+    const propositionOnDbAsMap = propositionOnDbFiltered.length > 0 ? new Map(propositionOnDbFiltered.map(p => [ p.propositionKey, p ])) : new Map()
 
-//       const contestMarketsChanged = offerMarketsChanged.get(contestKey)
-//       const contestMarketPricesChanged = offerMarketPricesChanged.get(contestKey)
+    const combinedPropositionKeys = new Set([
+      ...offerPropositions?.keys() || [],
+      ...propositionOnDbAsMap?.keys() || [],
+    ])
 
-//       const propositionKeys = new Set([
-//         ...contestPropositions?.keys() || [],
-//         ...contestPropositionsChanged?.keys() || [],
-//         ...contestOptionsChanged?.keys() || [],
-//         ...contestVariantsChanged?.keys() || [],
-//         ...contestOutcomesChanged?.keys() || [],
-//         ...contestResultsChanged?.keys() || [],
-//       ])
+    const propositionsToInsert = new Map<string, PropositionDb>()
 
-//       const marketRns = new Set([
-//         ...contestMarketsChanged?.keys() || [],
-//         ...contestMarketPricesChanged?.keys() || [],
-//       ])
+    for (const propositionKey of [...combinedPropositionKeys]) {
+      const offerProposition = offerPropositions.get(propositionKey)
+      const offerPropositionChanged = offerPropositionsChanged.get(propositionKey)
+      const existingProposition = propositionOnDbAsMap.get(propositionKey)
 
-//       const buildPropositionNodeFn = buildPropositionNodeUnderContestKey(contestKey, contestPropositions, contestPropositionsChanged, contestVariantsChanged, contestOptionsChanged, contestOutcomesChanged, contestResultsChanged)
-//       const buildMarketNodeFn = buildMarketNodeUnderContestKey(contestKey, contestMarketsChanged, contestMarketPricesChanged)
+      if (!offerProposition && !existingProposition){
+        continue
+      }
 
-//       const contestNode = buildContestNodeFromV1Objects(
-//         offerContests.get(contestKey),
-//         contestRelatedContests,
-//         buildPropositionNodeFn,
-//         buildMarketNodeFn,
-//       )(contestKey, [ ...propositionKeys ], [ ...marketRns ])
+      const mergedProposition = _.merge(
+        {},
+        existingProposition || {},
+        convertPropositionToDomain(offerProposition) || {},
+        offerPropositionChanged || {},
+      ) as PropositionDb
 
-//       return contestNode
-//     })
+      // const optionChanged = offerOptionsChanged.get(propositionKey) || new Map()
+      // const optionChangedToOption = [...optionChanged.entries()].reduce((acc,[key,oc])=> {
+      //   // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      //   const {contestKey, propositionKey, ...rest} = oc
 
-//     return contestTreeRootNode
-//   }
+      //   return {...acc, [key]: rest}
+      // },{})
 
-//   @apmSpan()
-//   async handleBatch(payload: EachBatchPayload): Promise<void>{
-//     try{
-//       const {
-//         batch,
-//         resolveOffset,
-//         heartbeat,
-//       } = payload
-//       const contestTree = this.createContestTreeFromBatchMessages(batch.messages)
+      // const variantChanged = offerVariantsChanged.get(propositionKey) || new Map()
+      // const variantChangedToVariant = [...variantChanged.entries()].reduce((acc,[key,oc])=> {
+      //   // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      //   const {contestKey, propositionKey, ...rest} = oc
 
-//       const promises = contestTree.map(m => this.processContestTree(m))
-//       await Promise.all(promises)
+      //   return {...acc, [key]: rest}
+      // },{})
 
-//       batch.messages.forEach(message => resolveOffset(message.offset))
-//       await heartbeat()
-//     } catch (error){
-//       this.log.error("Failed to consumer message:", payload.batch.messages)
-//       this.log.error("Due to : ", error)
-//       throw error
-//     }
-//   }
+      // const outcomeChanged = offerOutcomesChanged.get(propositionKey) || new Map()
+      // const outcomeChangedToOutcome = [...outcomeChanged.entries()].reduce((acc,[key,oc])=> {
+      //   // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      //   const {contestKey, propositionKey, ...rest} = oc
 
-//   @apmSpan()
-//   async processContestTree(contestTreeNode: ContestTreeRootNode): Promise<void>{
-//     const { contest, relatedContests } = contestTreeNode
+      //   return {...acc, [key]: rest}
+      // },{})
 
-//     if (contest || relatedContests){
-//       if(contest){
-//         const toBeUpsert = {
-//           ...contest,
-//           ...(relatedContests && { relatedContests: relatedContests.relatedContestKeys }),
-//         }
+      // Convert Change related messages to Domain structure
+      const optionsToUpdate = convertPropRelatedChangeToDomain(offerOptionsChanged.get(propositionKey), ["contestKey","propositionKey"])
+      const variantsToUpdate = convertPropRelatedChangeToDomain(offerVariantsChanged.get(propositionKey), ["contestKey","propositionKey"])
+      const outcomesToUpdate = convertPropRelatedChangeToDomain(offerOutcomesChanged.get(propositionKey), ["contestKey","propositionKey"])
 
-//         await this.contestService.upsertContestsByContestKeysAndEntities([ toBeUpsert ])
-//       } else{
-//         const toBeUpsert = {
-//           contestKey:         relatedContests!.contestKey,
-//           relatedContestKeys: relatedContests!.relatedContestKeys,
-//         }
-//         await this.contestService.updateRelatedContests([ toBeUpsert ])
-//       }
-//     }
-//     const propositionKeysForDb = contestTreeNode.propositions.map(m => ({ contestKey: contestTreeNode.contestKey, propositionKey: m.propositionKey }))
+      // Merge to the proposition structure
+      mergedProposition.options = _.merge({}, mergedProposition.options,optionsToUpdate)
+      mergedProposition.variants = _.merge({}, mergedProposition.variants,variantsToUpdate)
+      mergedProposition.outcomes = _.merge({}, mergedProposition.outcomes,outcomesToUpdate)
 
-//     // propositions on db
-//     const propositionsOnDb = await this.propositionService.getPropositions(propositionKeysForDb as any)
+      propositionsToInsert.set(propositionKey, mergedProposition)
+    }
 
-//     const propositionOnDbAsMap = new Map(propositionsOnDb.map(p => [ p.propositionKey, p ]))
+    if (offerContest) {
+      await this.datastoreService.insertContest(offerContest)
+    }
+    const propositionPromises = [...propositionsToInsert.values()].map((p)=> this.datastoreService.insertProposition(p))
 
-//     const propositionsToUpsert = contestTreeNode.propositions
-//       .map(offerProposition => createPropositionToUpdateFromNode(offerProposition, propositionOnDbAsMap.get(offerProposition.propositionKey)))
-//       .filter(p => !!p) as Proposition[]
+    await Promise.all(propositionPromises)
 
-//     if (propositionsToUpsert.length){
+    // ---- Grouping Market related items
+    // const offerMarketsChanged: Map<string, Market> = recursiveNestedMap(
+    //   deserializerForMessageTypeFn<Market>(OfferingMessageType.Market)
+    // )([ { groupingKey: "contestKey" }, { groupingKey: k => createLookupKey([k.contestKey, k.propositionKey]), groupingStrategy: "latest" } ])
 
-//       // Upsert all propositions in one go using multi row insert
-//       // await this.propositionService.upsertPropositions(propositionsToUpsert)
-//       // -----------------
+  }
 
-//       // Upsert individually/concurrently all of the propositions under contest
-//       const propositionPromises = propositionsToUpsert.map(p => this.propositionService.upsert(p as Proposition))
-//       await Promise.all(propositionPromises)
-//     }
+  async handleBatch(payload: EachBatchPayload) {
+    if (this.metrics.startTimeMs === 0) {
+      this.metrics.startTimeMs = performance.now()
+    }
+    const {batch: {messages}} = payload
+    this.metrics.total+= messages.length
+    // console.log("First message.... ", messages[0].value.toString())
 
-//     // Market updates
-//     const marketRns = contestTreeNode.markets.map(m => MarketRn.parse(m.marketRn))
+    // For sequential
 
-//     const marketsOnDb = await this.marketService.getMarketsWithIds(marketRns)
+    // Group messages by message type
+    const messagesGrouped = groupMessagesByKey(messages)
+    // console.log("Messages grouped by key...", messagesGrouped)
 
-//     const marketsToUpsert = contestTreeNode.markets.reduce((acc, market) => {
-//       const marketCombined = createMarketToUpdateFromNode(market, marketsOnDb.get(market.marketRn)?.market)
-//       if (marketCombined){
-//         return [ ...acc, marketCombined ]
-//       }
-//       return acc
-//     }, [] as Market[])
+    const messagesPerContestKeys = [...messagesGrouped.entries()]
 
-//     if (marketsToUpsert.length){
-//       await this.marketService.upsertMarkets(marketsToUpsert)
-//     }
-//   }
-// }
+    await Promise.all(messagesPerContestKeys.map(([key, msgs]) => this.processByContestKey(key, msgs)))
+
+    this.metrics.endTimeMs = performance.now()
+
+    // Resolve the Kafka offsets
+    payload.batch.messages.forEach(message => payload.resolveOffset(message.offset))
+    // Send heartbeat to Kafka
+    await payload.heartbeat()
+
+    const timeTakenToGenerate = this.metrics.endTimeMs - this.metrics.startTimeMs
+    logger.info("Total offerings processed = %s ", this.metrics.total)
+    logger.info("Time taken to process the data = %s ms", (timeTakenToGenerate))
+    logger.info("Throughput = %s", this.metrics.total / (timeTakenToGenerate) * 1000)
+
+  }
+
+}

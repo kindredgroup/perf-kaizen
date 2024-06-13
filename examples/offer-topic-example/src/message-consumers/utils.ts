@@ -8,6 +8,7 @@ import last from "lodash/fp/last.js"
 import map from "lodash/fp/map.js"
 import _ from "lodash"
 import { GroupingOption } from "./types.js"
+import { logger } from "@perf-kaizen/logger/build/logger.js"
 
 /**
  * Group the messages received in a batch by `messageType` header
@@ -16,6 +17,15 @@ export const groupMessagesByMessageType = <T>(messages: KafkaMessage[]): Map<T, 
   (k: [T, KafkaMessage[]][]) => new Map<T, KafkaMessage[]>(k),
   Object.entries,
   groupBy(getTopicMessageTypeFromHeader),
+)(messages)
+
+/**
+ * Group the messages received in a batch by `messageType` header
+ */
+export const groupMessagesByKey = (messages: KafkaMessage[]): Map<string, KafkaMessage[]> => compose(
+  (k: [string, KafkaMessage[]][]) => new Map<string, KafkaMessage[]>(k),
+  Object.entries,
+  groupBy((m: KafkaMessage) => m.key),
 )(messages)
 
 export const getMessagesByType = <T>(messages: Map<T, KafkaMessage[]>) => (type: T) => messages.get(type) || []
@@ -95,8 +105,13 @@ export const deserializeOfferMessageByType = (messagesMap: Map<OfferingMessageTy
       getOfferMessagesByType,
     )(offerMessageType)
 
-    return groupedRecord
+    return groupedRecord || []
   }
+}
+
+export const printMetrics = (messageType: OfferingMessageType, total: number, startTimeMs: number, endTimeMs: number) => {
+
+  logger.info(`Processed ${total} messages of messageType=${messageType} at a rate=${total / (endTimeMs-startTimeMs) * 1000}`)
 }
 
 

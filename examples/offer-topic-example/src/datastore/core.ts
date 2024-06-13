@@ -1,4 +1,5 @@
 import { Contest, MarketDb, PropositionDb } from "../domain/models.js"
+import { createLookupKey } from "../utils.js"
 
 export interface Datastore<T extends object> {
   // Create
@@ -37,6 +38,7 @@ export abstract class DatastoreService {
   contestStore: Datastore<Contest>
   propositionStore: PropositionDatastore
   marketStore: MarketDatastore
+  propositionCache: Map<string, PropositionDb>
 
   async insertContest(contest: Contest){
     await this.contestStore.insert(contest)
@@ -53,8 +55,23 @@ export abstract class DatastoreService {
     return this.propositionStore.get(contestKey, propositionKey)
   }
 
-
   async insertMarket(market: MarketDb){
     await this.marketStore.insert(market)
+  }
+
+  async getPropositionWithCache(contestKey: string, propositionKey: string): Promise<PropositionDb>{
+    const lookupKey = createLookupKey([contestKey, propositionKey])
+    const propositionFromCache = this.propositionCache.get(lookupKey)
+    if (propositionFromCache) {
+      // console.log("picked from cache..", contestKey,propositionKey)
+      return propositionFromCache
+    }
+    const proposition = await this.propositionStore.get(contestKey, propositionKey)
+    this.propositionCache.set(lookupKey, proposition)
+    return proposition
+  }
+
+  clearPropositionCache(){
+    this.propositionCache.clear()
   }
 }

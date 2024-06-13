@@ -15,6 +15,7 @@
   "scripts": {
     "start:load": "node --env-file=.env build/entry/generate-load.js",
     "start:consume:seq": "node --env-file=.env build/entry/consume-sequential.js",
+    "start:consume:concurrent": "node --env-file=.env build/entry/consume-concurrent.js",
     "clean": "rimraf coverage build tmp",
     "prebuild": "npm run lint",
     "build": "tsc -p tsconfig.json",

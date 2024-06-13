@@ -1,11 +1,11 @@
 import { logger } from "@perf-kaizen/logger/build/logger.js"
 import { KafkaClient } from "../kafka/kafka-client.js"
-import { SequentialMessageHandler } from "../message-consumers/sequential.js"
 import { ConsumerHandler, TopicConsumerHandler } from "../kafka/consumers/handler.js"
 import { MockDbService } from "../datastore/mockDbService.js"
 import { MockDbContest, MockDbMarket, MockDbProposition } from "../datastore/mockDbAdapters.js"
+import { ConcurrentMessageHandler } from "../message-consumers/concurrent.js"
 
-logger.info("🏁 Starting Sequential Consumer")
+logger.info("🏁 Starting Concurrent Consumer")
 
 
 // Hard coded variables to be moved to env variables
@@ -31,7 +31,7 @@ const setupKafka = (): KafkaClient => {
 
 const kafka = setupKafka()
 
-const kafkaConsumer = kafka.getClient().consumer({groupId: process.env.KAFKA_GROUP_ID_SEQ})
+const kafkaConsumer = kafka.getClient().consumer({groupId: process.env.KAFKA_GROUP_ID_CONCURRENT})
 
 await kafkaConsumer.connect()
 
@@ -44,7 +44,7 @@ if (!offerTopic){
 
 const datastoreService = new MockDbService(new MockDbContest(), new MockDbProposition(), new MockDbMarket())
 
-const offerHandler = new SequentialMessageHandler(datastoreService)
+const offerHandler = new ConcurrentMessageHandler(datastoreService)
 
 const consumerHandler: Map<string, TopicConsumerHandler> = new Map()
 consumerHandler.set(offerTopic, offerHandler)

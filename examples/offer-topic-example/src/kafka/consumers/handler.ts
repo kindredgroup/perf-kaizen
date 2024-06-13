@@ -1,3 +1,4 @@
+import { logger } from "@perf-kaizen/logger/build/logger.js"
 import type {
   EachBatchHandler, EachBatchPayload,
 } from "kafkajs"
@@ -32,6 +33,6 @@ export class ConsumerHandler{
       } ],
     })
 
-    console.log(`Committed till offset=${payload.batch.lastOffset()} for partition=${payload.batch.partition}`)
+    logger.debug(`Committed till offset=${payload.batch.lastOffset()} for partition=${payload.batch.partition}`)
   }
 }
