@@ -4,8 +4,24 @@ import { SequentialMessageHandler } from "../message-consumers/sequential.js"
 import { ConsumerHandler, TopicConsumerHandler } from "../kafka/consumers/handler.js"
 import { MockDbService } from "../datastore/mockDbService.js"
 import { MockDbContest, MockDbMarket, MockDbProposition } from "../datastore/mockDbAdapters.js"
+import { program } from "commander"
+import { ConsumerMode } from "../message-consumers/types.js"
 
-logger.info("🏁 Starting Sequential Consumer")
+program.description("Consume messages sequentially")
+       .option("-m, --mode <normal|optimized>", "Normal or optimized mode", "normal")
+       .option("-wc, --with-cache", "Cache the db results till end of each batch")
+       .parse()
+
+
+const options = program.opts();
+
+const consumerMode:ConsumerMode = options.mode ?? "normal"
+const cacheEnabled = options.withCache ?? false
+
+
+logger.info("Starting Sequential Consumer")
+logger.info("Mode: %s", consumerMode)
+logger.info("Use Caching?: %s ", cacheEnabled)
 
 
 // Hard coded variables to be moved to env variables
@@ -42,9 +58,9 @@ if (!offerTopic){
   throw new Error("Offer topic not passed")
 }
 
-const datastoreService = new MockDbService(new MockDbContest(), new MockDbProposition(), new MockDbMarket())
+const datastoreService = new MockDbService(new MockDbContest(), new MockDbProposition(), new MockDbMarket(), cacheEnabled)
 
-const offerHandler = new SequentialMessageHandler(datastoreService)
+const offerHandler = new SequentialMessageHandler(consumerMode, datastoreService)
 
 const consumerHandler: Map<string, TopicConsumerHandler> = new Map()
 consumerHandler.set(offerTopic, offerHandler)

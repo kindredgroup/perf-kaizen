@@ -111,7 +111,7 @@ export const deserializeOfferMessageByType = (messagesMap: Map<OfferingMessageTy
 
 export const printMetrics = (messageType: OfferingMessageType, total: number, startTimeMs: number, endTimeMs: number) => {
 
-  logger.info(`Processed ${total} messages of messageType=${messageType} at a rate=${total / (endTimeMs-startTimeMs) * 1000}`)
+  logger.debug(`Processed ${total} messages of messageType=${messageType} at a rate=${total / (endTimeMs-startTimeMs) * 1000}`)
 }
 
 

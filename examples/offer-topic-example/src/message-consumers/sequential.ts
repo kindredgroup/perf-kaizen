@@ -1,23 +1,26 @@
 import { EachBatchPayload } from "kafkajs"
 import { TopicConsumerHandler } from "../kafka/consumers/handler.js"
-import { deserializeOfferMessageByType, groupMessagesByMessageType, printMetrics } from "./utils.js"
+import { deserializeOfferMessageByType, groupMessagesByMessageType, printMetrics, recursiveNestedMap } from "./utils.js"
 import { OfferingMessageType } from "../types.js"
-import { Contest, Market, OptionChanged, OutcomeChanged, Proposition, PropositionChanged, PropositionDb, VariantChanged } from "../domain/models.js"
+import { Contest, Market, Option, OptionChanged, Outcome, OutcomeChanged, Proposition, PropositionChanged, PropositionDb, Variant, VariantChanged } from "../domain/models.js"
 import { DatastoreService } from "../datastore/core.js"
 import { logger } from "@perf-kaizen/logger/build/logger.js"
-import { convertMarketToDomain, convertPropositionToDomain } from "../domain/converters/kafka-to-internal.js"
+import { convertMarketToDomain, convertPropRelatedChangeToDomain, convertPropositionToDomain } from "../domain/converters/kafka-to-internal.js"
 import { createLookupKey } from "../utils.js"
 import _ from "lodash"
+import { ConsumerMode } from "./types.js"
 
 export class SequentialMessageHandler implements TopicConsumerHandler{
   private datastoreService: DatastoreService
+  private consumerMode: ConsumerMode
   metrics: {
     total: number
     startTimeMs: number
     endTimeMs: number
   }
-  constructor(datastoreService: DatastoreService){
+  constructor(consumerMode: ConsumerMode, datastoreService: DatastoreService){
     this.datastoreService = datastoreService
+    this.consumerMode = consumerMode
     this.metrics = {
       total:0,
       startTimeMs:0,
@@ -37,6 +40,43 @@ export class SequentialMessageHandler implements TopicConsumerHandler{
     const marketPromises = markets.map(m => this.datastoreService.insertMarket(convertMarketToDomain(m)))
     await Promise.all(marketPromises)
   }
+  // More optimised way to handle PropositionsChanged
+  async processPropositionsChangedOptimised(propositionsChanged: PropositionChanged[]){
+    const propositionsChangedUnderNode = recursiveNestedMap(
+      propositionsChanged
+    )([
+      { groupingKey: "contestKey" },
+      { groupingKey: "propositionKey", groupingStrategy: "merge" },
+    ]) as unknown as Map<string, Map<string,PropositionChanged>>
+
+    const getPropositionPromises: Promise<PropositionDb>[] = []
+
+    for (const [contestKey, map1] of propositionsChangedUnderNode){
+      for (const [propositionKey] of map1) {
+        getPropositionPromises.push(this.datastoreService.getProposition(contestKey, propositionKey))
+      }
+    }
+
+    const propositions = await Promise.all(getPropositionPromises)
+
+    const propositionsToUpsert: PropositionDb[] = []
+
+    for (const [contestKey, map1] of propositionsChangedUnderNode){
+      for (const [propositionKey, propositionChangedMap] of map1) {
+        const proposition = propositions.find(p => p.contestKey === contestKey && p.propositionKey === propositionKey)
+
+        if (!proposition) continue
+
+        const propositionUpdates  = _.merge({}, proposition,propositionChangedMap)
+        propositionsToUpsert.push(propositionUpdates)
+      }
+    }
+
+    await Promise.all(propositionsToUpsert.map(p => this.datastoreService.insertProposition(p)))
+
+  }
+
+  // Slow sequential way to handle PropositionsChanged
   async processPropositionsChanged(propositionsChanged: PropositionChanged[]){
     const propositionChangedPromises =  []
 
@@ -49,7 +89,7 @@ export class SequentialMessageHandler implements TopicConsumerHandler{
 
       // If not found locally, get from datastore.
       if (!proposition) {
-        proposition = await this.datastoreService.getPropositionWithCache(pc.contestKey, pc.propositionKey)
+        proposition = await this.datastoreService.getProposition(pc.contestKey, pc.propositionKey)
         propositionMap.set(lookupKey,proposition)
       }
 
@@ -66,9 +106,46 @@ export class SequentialMessageHandler implements TopicConsumerHandler{
     await Promise.all(propositionChangedPromises)
   }
 
+  // More optimised way to handle OptionsChanged
+  async processOptionsChangedOptimised(optionsChanged: OptionChanged[]){
+    const optionsUnderNode = recursiveNestedMap(
+      optionsChanged
+    )([
+      { groupingKey: "contestKey" },
+      { groupingKey: "propositionKey" },
+      { groupingKey: "optionKey", groupingStrategy: "merge" }
+    ]) as unknown as Map<string, Map<string,Map<string, OptionChanged>>>
+
+    const getPropositionPromises: Promise<PropositionDb>[] = []
+
+    for (const [contestKey, map1] of optionsUnderNode){
+      for (const [propositionKey] of map1) {
+        getPropositionPromises.push(this.datastoreService.getProposition(contestKey, propositionKey))
+      }
+    }
+
+    const propositions = await Promise.all(getPropositionPromises)
+
+    const propositionsToUpsert: PropositionDb[] = []
+
+    for (const [contestKey, map1] of optionsUnderNode){
+      for (const [propositionKey, optionChangedMap] of map1) {
+        const proposition = propositions.find(p => p.contestKey === contestKey && p.propositionKey === propositionKey)
+
+        if (!proposition) continue
+
+        const optionsToUpdate = convertPropRelatedChangeToDomain<OptionChanged,Option>(optionChangedMap, ["contestKey","propositionKey"])
+        proposition.options = _.merge({}, proposition.options,optionsToUpdate)
+        propositionsToUpsert.push(proposition)
+      }
+    }
+
+    await Promise.all(propositionsToUpsert.map(p => this.datastoreService.insertProposition(p)))
+  }
+
+  // Slow sequential way to handle OptionsChanged
   async processOptionsChanged(optionsChanged: OptionChanged[]){
     const optionsChangedPromises =  []
-
     const propositionMap = new Map<string, PropositionDb>()
     for (const oc of optionsChanged) {
       const lookupKey = createLookupKey([oc.contestKey, oc.propositionKey])
@@ -78,7 +155,7 @@ export class SequentialMessageHandler implements TopicConsumerHandler{
 
       // If not found locally, get from datastore.
       if (!proposition) {
-        proposition = await this.datastoreService.getPropositionWithCache(oc.contestKey, oc.propositionKey)
+        proposition = await this.datastoreService.getProposition(oc.contestKey, oc.propositionKey)
         propositionMap.set(lookupKey,proposition)
       }
 
@@ -106,6 +183,45 @@ export class SequentialMessageHandler implements TopicConsumerHandler{
 
     await Promise.all(optionsChangedPromises)
   }
+
+   // More optimised way to handle VariantsChanged
+   async processVariantsChangedOptimised(variantsChanged: VariantChanged[]){
+    const variantsUnderNode = recursiveNestedMap(
+      variantsChanged
+    )([
+      { groupingKey: "contestKey" },
+      { groupingKey: "propositionKey" },
+      { groupingKey: "variantKey", groupingStrategy: "merge" }
+    ]) as unknown as Map<string, Map<string,Map<string, VariantChanged>>>
+
+    const getPropositionPromises: Promise<PropositionDb>[] = []
+
+    for (const [contestKey, map1] of variantsUnderNode){
+      for (const [propositionKey] of map1) {
+        getPropositionPromises.push(this.datastoreService.getProposition(contestKey, propositionKey))
+      }
+    }
+
+    const propositions = await Promise.all(getPropositionPromises)
+
+    const propositionsToUpsert: PropositionDb[] = []
+
+    for (const [contestKey, map1] of variantsUnderNode){
+      for (const [propositionKey, variantChangedMap] of map1) {
+        const proposition = propositions.find(p => p.contestKey === contestKey && p.propositionKey === propositionKey)
+
+        if (!proposition) continue
+
+        const variantsToUpdate = convertPropRelatedChangeToDomain<VariantChanged,Variant>(variantChangedMap, ["contestKey","propositionKey"])
+        proposition.variants = _.merge({}, proposition.variants,variantsToUpdate)
+        propositionsToUpsert.push(proposition)
+      }
+    }
+
+    await Promise.all(propositionsToUpsert.map(p => this.datastoreService.insertProposition(p)))
+  }
+
+  // Slow sequential way to handle VariantsChanged
   async processVariantsChanged(variantsChanged: VariantChanged[]){
     const optionsChangedPromises =  []
 
@@ -118,7 +234,7 @@ export class SequentialMessageHandler implements TopicConsumerHandler{
 
       // If not found locally, get from datastore.
       if (!proposition) {
-        proposition = await this.datastoreService.getPropositionWithCache(vc.contestKey, vc.propositionKey)
+        proposition = await this.datastoreService.getProposition(vc.contestKey, vc.propositionKey)
         propositionMap.set(lookupKey,proposition)
       }
 
@@ -146,6 +262,45 @@ export class SequentialMessageHandler implements TopicConsumerHandler{
 
     await Promise.all(optionsChangedPromises)
   }
+
+  // More optimised way to handle OutcomesChanged
+  async processOutcomesChangedOptimised(outcomesChanged: OutcomeChanged[]){
+    const outcomesUnderNode = recursiveNestedMap(
+      outcomesChanged
+    )([
+      { groupingKey: "contestKey" },
+      { groupingKey: "propositionKey" },
+      { groupingKey: outcome => createLookupKey([ outcome.optionKey, outcome.variantKey ]), groupingStrategy: "latest" }
+    ]) as unknown as Map<string, Map<string,Map<string, OutcomeChanged>>>
+
+    const getPropositionPromises: Promise<PropositionDb>[] = []
+
+    for (const [contestKey, map1] of outcomesUnderNode){
+      for (const [propositionKey] of map1) {
+        getPropositionPromises.push(this.datastoreService.getProposition(contestKey, propositionKey))
+      }
+    }
+
+    const propositions = await Promise.all(getPropositionPromises)
+
+    const propositionsToUpsert: PropositionDb[] = []
+
+    for (const [contestKey, map1] of outcomesUnderNode){
+      for (const [propositionKey, outcomeChangedMap] of map1) {
+        const proposition = propositions.find(p => p.contestKey === contestKey && p.propositionKey === propositionKey)
+
+        if (!proposition) continue
+
+        const outcomesToUpdate = convertPropRelatedChangeToDomain<OutcomeChanged,Outcome>(outcomeChangedMap, ["contestKey","propositionKey"])
+        proposition.outcomes = _.merge({}, proposition.outcomes,outcomesToUpdate)
+        propositionsToUpsert.push(proposition)
+      }
+    }
+
+    await Promise.all(propositionsToUpsert.map(p => this.datastoreService.insertProposition(p)))
+  }
+
+  // Slow sequential way to handle OutcomesChanged
   async processOutcomesChanged(outcomesChanged: OutcomeChanged[]){
     const optionsChangedPromises =  []
 
@@ -158,7 +313,7 @@ export class SequentialMessageHandler implements TopicConsumerHandler{
 
       // If not found locally, get from datastore.
       if (!proposition) {
-        proposition = await this.datastoreService.getPropositionWithCache(oc.contestKey, oc.propositionKey)
+        proposition = await this.datastoreService.getProposition(oc.contestKey, oc.propositionKey)
         propositionMap.set(lookupKey,proposition)
       }
 
@@ -222,28 +377,46 @@ export class SequentialMessageHandler implements TopicConsumerHandler{
     const offerPropositionsChanged = deserializerForMessageTypeFn<PropositionChanged>(OfferingMessageType.PropositionChanged)
     const totalPropositionsChanged = offerPropositionsChanged.length
     const propositionsChangedProcessingStartMs = performance.now()
-    await this.processPropositionsChanged(offerPropositionsChanged)
+    if (this.consumerMode === "optimized") {
+      await this.processPropositionsChangedOptimised(offerPropositionsChanged)
+    } else {
+      await this.processPropositionsChanged(offerPropositionsChanged)
+    }
     const propositionsChangedProcessingEndMs = performance.now()
 
     //  - Upsert OptionChanged
     const offerOptionsChanged = deserializerForMessageTypeFn<OptionChanged>(OfferingMessageType.OptionChanged)
     const totalOptionsChanged = offerOptionsChanged.length
     const optionsChangedProcessingStartMs = performance.now()
-    await this.processOptionsChanged(offerOptionsChanged)
+
+    if (this.consumerMode === "optimized") {
+      await this.processOptionsChangedOptimised(offerOptionsChanged)
+    } else {
+      await this.processOptionsChanged(offerOptionsChanged)
+    }
+
     const optionsChangedProcessingEndMs = performance.now()
 
     //  - Upsert VariantChanged
     const offerVariantsChanged = deserializerForMessageTypeFn<VariantChanged>(OfferingMessageType.VariantChanged)
     const totalVariantsChanged = offerVariantsChanged.length
     const variantsChangedProcessingStartMs = performance.now()
-    await this.processVariantsChanged(offerVariantsChanged)
+    if (this.consumerMode === "optimized") {
+      await this.processVariantsChangedOptimised(offerVariantsChanged)
+    } else {
+      await this.processVariantsChanged(offerVariantsChanged)
+    }
     const variantsChangedProcessingEndMs = performance.now()
 
     //  - Upsert OutcomeChanged
     const offerOutcomesChanged = deserializerForMessageTypeFn<OutcomeChanged>(OfferingMessageType.OutcomeChanged)
     const totalOutcomesChanged = offerOutcomesChanged.length
     const outcomesChangedProcessingStartMs = performance.now()
-    await this.processOutcomesChanged(offerOutcomesChanged)
+    if (this.consumerMode === "optimized") {
+       await this.processOutcomesChangedOptimised(offerOutcomesChanged)
+    } else {
+      await this.processOutcomesChanged(offerOutcomesChanged)
+    }
     const outcomesChangedProcessingEndtMs = performance.now()
 
     //  - Upsert results
@@ -253,15 +426,15 @@ export class SequentialMessageHandler implements TopicConsumerHandler{
     // await this.processMarkets(offerMarket)
     //  - Upsert PriceChanged
 
-    logger.info("+++++++++")
-    logger.info("Processed partition=%s with below stats per messageType", payload.batch.partition)
+    logger.debug("+++++++++")
+    logger.debug("Processed partition=%s with below stats per messageType", payload.batch.partition)
     printMetrics(OfferingMessageType.Contest, totalContest, contestProcessingStartMs, contestProcessingEndMs)
     printMetrics(OfferingMessageType.Proposition, totalProposition, propositionProcessingStartMs, propositionProcessingEndMs)
     printMetrics(OfferingMessageType.PropositionChanged, totalPropositionsChanged, propositionsChangedProcessingStartMs, propositionsChangedProcessingEndMs)
     printMetrics(OfferingMessageType.OptionChanged, totalOptionsChanged, optionsChangedProcessingStartMs, optionsChangedProcessingEndMs)
     printMetrics(OfferingMessageType.VariantChanged, totalVariantsChanged, variantsChangedProcessingStartMs, variantsChangedProcessingEndMs)
     printMetrics(OfferingMessageType.OutcomeChanged, totalOutcomesChanged, outcomesChangedProcessingStartMs, outcomesChangedProcessingEndtMs)
-    logger.info("+++++++++")
+    logger.debug("+++++++++")
 
     this.metrics.endTimeMs = performance.now()
 

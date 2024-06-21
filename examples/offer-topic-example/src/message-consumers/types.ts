@@ -21,3 +21,6 @@ type RecursiveKeyOfHandleValue<TValue, Text extends string> =
       TValue extends object
         ? Text | `${ Text }${ RecursiveKeyOfInner<TValue> }`
         : Text;
+
+
+export type ConsumerMode = "normal" | "optimized"

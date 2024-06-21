@@ -29,6 +29,7 @@
   "dependencies": {
     "@perf-kaizen/load-generator": "^0.1.0",
     "@typescript-eslint/eslint-plugin": "^7.11.0",
+    "commander": "^12.1.0",
     "kafkajs": "^2.2.4",
     "lz4": "^0.6.5",
     "winston": "^3.13.0"

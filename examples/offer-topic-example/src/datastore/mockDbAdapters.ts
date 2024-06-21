@@ -53,21 +53,21 @@ export class MockDbProposition implements PropositionDatastore {
 
   // Datastore interface methods
   async insert(row: PropositionDb): Promise<void> {
-    await sleep(10)
+    await sleep(50)
     const key = createLookupKey([row.contestKey, row.propositionKey])
 
     this.propositionMap.set(key, row)
   }
 
   async get(contestKey: string, propositionKey: string): Promise<PropositionDb|undefined> {
-    await sleep(5)
+    await sleep(20)
 
     const key = createLookupKey([contestKey, propositionKey])
     return this.propositionMap.get(key)
   }
 
   async update(contestKey: string, propositionKey: string, row: Partial<PropositionDb>): Promise<PropositionDb> {
-    await sleep(10)
+    await sleep(50)
 
     const key = createLookupKey([contestKey, propositionKey])
     const existingRow = this.propositionMap.get(key)
@@ -79,7 +79,7 @@ export class MockDbProposition implements PropositionDatastore {
 
   }
   async delete(contestKey: string, propositionKey: string): Promise<void> {
-    await sleep(5)
+    await sleep(20)
 
     const key = createLookupKey([contestKey, propositionKey])
     this.propositionMap.delete(key)

@@ -23,10 +23,10 @@ export const convertMarketToDomain = (market: Market): MarketDb => {
   }
 }
 
-export const convertPropRelatedChangeToDomain = <T extends object,K>(changesMap: Map<string,T> , keysToDiscard: Array<keyof T > = []):K => {
+export const convertPropRelatedChangeToDomain = <T extends object,K>(changesMap: Map<string,T> , keysToDiscard: Array<keyof T > = []):{[key:string]: K} => {
   return changesMap ? [...changesMap.entries()].reduce((acc,[key,oc])=> {
     const rest = _.omit(oc, keysToDiscard)
     return {...acc, [key]: rest}
-  },{} as K) : {} as K
+  },{} as K) : {}
 
 }

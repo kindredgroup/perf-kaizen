@@ -1,7 +1,7 @@
 import { EachBatchPayload, KafkaMessage } from "kafkajs"
 import { TopicConsumerHandler } from "../kafka/consumers/handler.js"
 import { deserializeOfferMessageByType, groupMessagesByKey, groupMessagesByMessageType, recursiveNestedMap } from "./utils.js"
-import { Contest, OptionChanged, OutcomeChanged, Proposition, PropositionChanged, PropositionDb, VariantChanged } from "../domain/models.js"
+import { Contest, Option, OptionChanged, Outcome, OutcomeChanged, Proposition, PropositionChanged, PropositionDb, Variant, VariantChanged } from "../domain/models.js"
 import { DatastoreService } from "../datastore/core.js"
 import { convertPropRelatedChangeToDomain, convertPropositionToDomain } from "../domain/converters/kafka-to-internal.js"
 import { createLookupKey } from "../utils.js"
@@ -77,7 +77,7 @@ export class ConcurrentMessageHandler implements TopicConsumerHandler{
       ...propositionOnDbAsMap?.keys() || [],
     ])
 
-    const propositionsToInsert = new Map<string, PropositionDb>()
+    const propositionsToInsert: PropositionDb[] = []
 
     for (const propositionKey of [...combinedPropositionKeys]) {
       const offerProposition = offerPropositions.get(propositionKey)
@@ -95,47 +95,23 @@ export class ConcurrentMessageHandler implements TopicConsumerHandler{
         offerPropositionChanged || {},
       ) as PropositionDb
 
-      // const optionChanged = offerOptionsChanged.get(propositionKey) || new Map()
-      // const optionChangedToOption = [...optionChanged.entries()].reduce((acc,[key,oc])=> {
-      //   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      //   const {contestKey, propositionKey, ...rest} = oc
-
-      //   return {...acc, [key]: rest}
-      // },{})
-
-      // const variantChanged = offerVariantsChanged.get(propositionKey) || new Map()
-      // const variantChangedToVariant = [...variantChanged.entries()].reduce((acc,[key,oc])=> {
-      //   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      //   const {contestKey, propositionKey, ...rest} = oc
-
-      //   return {...acc, [key]: rest}
-      // },{})
-
-      // const outcomeChanged = offerOutcomesChanged.get(propositionKey) || new Map()
-      // const outcomeChangedToOutcome = [...outcomeChanged.entries()].reduce((acc,[key,oc])=> {
-      //   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      //   const {contestKey, propositionKey, ...rest} = oc
-
-      //   return {...acc, [key]: rest}
-      // },{})
-
       // Convert Change related messages to Domain structure
-      const optionsToUpdate = convertPropRelatedChangeToDomain(offerOptionsChanged.get(propositionKey), ["contestKey","propositionKey"])
-      const variantsToUpdate = convertPropRelatedChangeToDomain(offerVariantsChanged.get(propositionKey), ["contestKey","propositionKey"])
-      const outcomesToUpdate = convertPropRelatedChangeToDomain(offerOutcomesChanged.get(propositionKey), ["contestKey","propositionKey"])
+      const optionsToUpdate = convertPropRelatedChangeToDomain<OptionChanged,Option>(offerOptionsChanged.get(propositionKey), ["contestKey","propositionKey"])
+      const variantsToUpdate = convertPropRelatedChangeToDomain<VariantChanged,Variant>(offerVariantsChanged.get(propositionKey), ["contestKey","propositionKey"])
+      const outcomesToUpdate = convertPropRelatedChangeToDomain<OutcomeChanged,Outcome>(offerOutcomesChanged.get(propositionKey), ["contestKey","propositionKey"])
 
       // Merge to the proposition structure
       mergedProposition.options = _.merge({}, mergedProposition.options,optionsToUpdate)
       mergedProposition.variants = _.merge({}, mergedProposition.variants,variantsToUpdate)
       mergedProposition.outcomes = _.merge({}, mergedProposition.outcomes,outcomesToUpdate)
 
-      propositionsToInsert.set(propositionKey, mergedProposition)
+      propositionsToInsert.push(mergedProposition)
     }
 
     if (offerContest) {
       await this.datastoreService.insertContest(offerContest)
     }
-    const propositionPromises = [...propositionsToInsert.values()].map((p)=> this.datastoreService.insertProposition(p))
+    const propositionPromises = propositionsToInsert.map(p => this.datastoreService.insertProposition(p))
 
     await Promise.all(propositionPromises)
 

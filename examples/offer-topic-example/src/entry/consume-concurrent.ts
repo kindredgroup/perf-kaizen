@@ -42,7 +42,7 @@ if (!offerTopic){
   throw new Error("Offer topic not passed")
 }
 
-const datastoreService = new MockDbService(new MockDbContest(), new MockDbProposition(), new MockDbMarket())
+const datastoreService = new MockDbService(new MockDbContest(), new MockDbProposition(), new MockDbMarket(), false)
 
 const offerHandler = new ConcurrentMessageHandler(datastoreService)
 

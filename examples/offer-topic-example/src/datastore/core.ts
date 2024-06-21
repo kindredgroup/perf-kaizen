@@ -49,6 +49,7 @@ export abstract class DatastoreService {
 
   async insertProposition(proposition: PropositionDb){
     await this.propositionStore.insert(proposition)
+    this.propositionCache.set(createLookupKey([proposition.contestKey,proposition.propositionKey]),proposition)
   }
 
   async getProposition(contestKey: string, propositionKey: string): Promise<PropositionDb>{

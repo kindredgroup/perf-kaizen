@@ -5,15 +5,35 @@ import { getOfferingsByTypeCountToGenerate } from "../utils.js"
 import { logger } from "@perf-kaizen/logger/build/logger.js"
 import { KafkaClient } from "../kafka/kafka-client.js"
 
-logger.info("🏁 Starting offer message load generator...")
+import { program } from "commander"
+
+program.description("Generate the offer messages and publish to kafka at a specified rate")
+       .requiredOption("-r, --rate <rate>", "Rate (tps) for producing offer messages", parseInt)
+       .requiredOption("--contests <contests>", "Number of contests to create", parseInt)
+       .requiredOption("--propositions <propositions>", "Number of propositions to create under each contest", parseInt)
+       .requiredOption("--options <options>", "Number of options to create under each proposition", parseInt)
+       .requiredOption("--variants <varaints>", "Number of variants to create under each proposition", parseInt)
+       .parse()
+
+
+const options = program.opts();
+
+const rate = options.rate
+const contests= options.contests
+const propositionsPerContest =  options.propositions
+const optionsPerProposition = options.options
+const variantsPerProposition= options.variants
+
+logger.info("🚀 Warming up to generate load at %s tps", rate)
 
 // The input use to generate the load.
 const loadToGenerateInput: OfferingLoadGeneratorParams = {
-  contests: 3,
-  propositionsPerContest: 240,
-  optionsPerProposition: 20,
-  variantsPerProposition: 2
+  contests,
+  propositionsPerContest,
+  optionsPerProposition,
+  variantsPerProposition,
 }
+
 
 // Hard coded variables to be moved to env variables
 const KAFKA_BROKERS = process.env.KAFKA_BROKERS
@@ -74,15 +94,21 @@ const publishToKafka = async (arg) => {
 
 }
 
-const THROUGHPUT = 15_000
-const result = await loadGeneratorMulti({rate: THROUGHPUT}, [generateMockDataSet1(), generateMockDataSet2()], publishToKafka)
+const result = await loadGeneratorMulti({rate}, [generateMockDataSet1(), generateMockDataSet2()], publishToKafka)
 
 // Generate load and execute the async task like publishing to Kafka
 
 const timeTakenToGenerate = result.metrics.endTimeMs - result.metrics.startTimeMs
-logger.info("Total mock offerings generated = %s ", result.metrics.totalCount)
-logger.info("Time taken to generate the mock data = %s ms", (timeTakenToGenerate))
-logger.info("Expected TPS = %s", THROUGHPUT)
-logger.info("Actual TPS = %s", result.metrics.totalCount / (timeTakenToGenerate) * 1000)
+
+logger.info("🏁 Finished load generation of offer messages")
+
+logger.info("👋 Printing stats and exiting")
+logger.info("+++++++++++++++++++++++++++++++++++++++++++")
+logger.info("+ Total offerings generated = %s ", result.metrics.totalCount)
+logger.info("+ Total Time                = %s ms", (timeTakenToGenerate))
+logger.info("+ Expected rate             = %s", rate)
+logger.info("+ Actual rate               = %s", result.metrics.totalCount / (timeTakenToGenerate) * 1000)
+logger.info("+++++++++++++++++++++++++++++++++++++++++++")
+
 
 process.exit()
